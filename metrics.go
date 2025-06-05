@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 // rateLimitMetrics holds all the rate limit metrics
@@ -23,14 +22,12 @@ var (
 )
 
 // initializeMetrics creates and registers all rate limit metrics with Caddy's internal registry
-func initializeMetrics(registry prometheus.Registerer) *rateLimitMetrics {
+func initializeMetrics(registry prometheus.Registerer) (*rateLimitMetrics, error) {
 	const ns, sub = "caddy", "rate_limit"
 
-	factory := promauto.With(registry)
-
-	return &rateLimitMetrics{
+	metrics := &rateLimitMetrics{
 		// rate_limit_declined_requests_total - Total number of requests declined with HTTP 429
-		declinedTotal: factory.NewCounterVec(
+		declinedTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: ns,
 				Subsystem: sub,
@@ -41,7 +38,7 @@ func initializeMetrics(registry prometheus.Registerer) *rateLimitMetrics {
 		),
 
 		// rate_limit_requests_total - Total number of requests that passed through the Rate Limit module
-		requestsTotal: factory.NewCounterVec(
+		requestsTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: ns,
 				Subsystem: sub,
@@ -52,7 +49,7 @@ func initializeMetrics(registry prometheus.Registerer) *rateLimitMetrics {
 		),
 
 		// rate_limit_process_time_seconds - Time taken to process rate limiting for each request
-		processTime: factory.NewHistogramVec(
+		processTime: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Namespace: ns,
 				Subsystem: sub,
@@ -64,7 +61,7 @@ func initializeMetrics(registry prometheus.Registerer) *rateLimitMetrics {
 		),
 
 		// rate_limit_keys_total - Total number of keys that each RL zone contains
-		keysTotal: factory.NewGaugeVec(
+		keysTotal: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Namespace: ns,
 				Subsystem: sub,
@@ -75,7 +72,7 @@ func initializeMetrics(registry prometheus.Registerer) *rateLimitMetrics {
 		),
 
 		// rate_limit_config - Shows configuration of the rate limiter module
-		config: factory.NewCounterVec(
+		config: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: ns,
 				Subsystem: sub,
@@ -85,21 +82,44 @@ func initializeMetrics(registry prometheus.Registerer) *rateLimitMetrics {
 			[]string{"zone", "max_events", "window"},
 		),
 	}
+
+	// Register each metric and check for AlreadyRegisteredError
+	collectors := []prometheus.Collector{
+		metrics.declinedTotal,
+		metrics.requestsTotal,
+		metrics.processTime,
+		metrics.keysTotal,
+		metrics.config,
+	}
+
+	for _, collector := range collectors {
+		if err := registry.Register(collector); err != nil {
+			// Check if it's already registered error, which is expected on config reload
+			if _, ok := err.(prometheus.AlreadyRegisteredError); !ok {
+				// If it's not an AlreadyRegisteredError, return the actual error
+				return nil, err
+			}
+			// If it's AlreadyRegisteredError, continue - this is expected
+		}
+	}
+
+	return metrics, nil
 }
 
 // registerMetrics registers all rate limit metrics with the provided Prometheus registry
 func registerMetrics(reg prometheus.Registerer) error {
-	// Try to initialize metrics - this may fail with AlreadyRegisteredError on config reload
-	metrics := initializeMetrics(reg)
+	// Try to initialize metrics - may handle AlreadyRegisteredError gracefully
+	metrics, err := initializeMetrics(reg)
+	if err != nil {
+		return err
+	}
 
-	// Check if we got an AlreadyRegisteredError (which is expected on config reload)
-	// We can handle it by trying to set the global metrics if it's nil
+	// Set the global metrics instance if it's nil
+	// On config reload, this ensures we continue using metrics even if some were already registered
 	if globalMetrics == nil {
 		globalMetrics = metrics
 	}
 
-	// For now, we ignore duplicate registration errors as suggested
-	// This allows metrics to continue working after config reloads
 	return nil
 }
 
