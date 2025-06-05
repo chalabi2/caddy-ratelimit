@@ -3,7 +3,6 @@ package caddyrl
 import (
 	"fmt"
 	"strconv"
-	"sync"
 	"testing"
 
 	"github.com/caddyserver/caddy/v2/caddytest"
@@ -17,7 +16,6 @@ func TestMetrics(t *testing.T) {
 
 	// Reset global metrics
 	globalMetrics = nil
-	metricsOnce = sync.Once{}
 
 	window := 10
 	maxEvents := 2
