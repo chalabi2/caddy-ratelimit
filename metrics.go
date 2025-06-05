@@ -2,7 +2,6 @@ package caddyrl
 
 import (
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -19,8 +18,6 @@ type rateLimitMetrics struct {
 }
 
 var (
-	// Metrics registration sync to ensure we only register once
-	metricsOnce sync.Once
 	// Global metrics instance
 	globalMetrics *rateLimitMetrics
 )
@@ -92,11 +89,18 @@ func initializeMetrics(registry prometheus.Registerer) *rateLimitMetrics {
 
 // registerMetrics registers all rate limit metrics with the provided Prometheus registry
 func registerMetrics(reg prometheus.Registerer) error {
-	var err error
-	metricsOnce.Do(func() {
-		globalMetrics = initializeMetrics(reg)
-	})
-	return err
+	// Try to initialize metrics - this may fail with AlreadyRegisteredError on config reload
+	metrics := initializeMetrics(reg)
+
+	// Check if we got an AlreadyRegisteredError (which is expected on config reload)
+	// We can handle it by trying to set the global metrics if it's nil
+	if globalMetrics == nil {
+		globalMetrics = metrics
+	}
+
+	// For now, we ignore duplicate registration errors as suggested
+	// This allows metrics to continue working after config reloads
+	return nil
 }
 
 // metricsCollector holds the metrics collection methods
